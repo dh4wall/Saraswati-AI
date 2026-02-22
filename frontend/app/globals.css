@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+/* ── Design Tokens ─────────────────────────────────────────────── */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Brand palette */
+  --color-primary: #3b82f6;
+  --color-primary-dark: #2563eb;
+  --color-accent-cyan: #0ea5e9;
+  --color-deep-indigo: #1e1b4b;
+  --color-slate-soft: #f8fafc;
+  --color-silver-light: #64748b;
+}
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --sidebar-bg: #ffffff;
+  --card-bg: #ffffff;
+  --border-color: #e2e8f0;
+}
+
+.dark {
+  --background: #0f172a;
+  --foreground: #f1f5f9;
+  --sidebar-bg: #1e293b;
+  --card-bg: #1e293b;
+  --border-color: #334155;
+}
+
+/* ── Base ───────────────────────────────────────────────────────── */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* ── Utility classes ────────────────────────────────────────────── */
+.glass {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.dark .glass {
+  background: rgba(30, 41, 59, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.glass-nav {
+  background: rgba(59, 130, 246, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hero-gradient {
+  background: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.1) 0%, #ffffff 70%);
+}
+
+.section-gradient-soft {
+  background: linear-gradient(180deg, #ffffff 0%, #f0f7ff 100%);
+}
+
+.book-aura {
+  box-shadow:
+    0 0 80px -20px rgba(59, 130, 246, 0.25),
+    0 0 30px -10px rgba(14, 165, 233, 0.15);
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, #1e1b4b 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 24px 48px -12px rgba(59, 130, 246, 0.15);
+}
+
+/* onboard step transition */
+.step-enter {
+  opacity: 0;
+  transform: translateX(40px);
+}
+
+.step-exit {
+  opacity: 0;
+  transform: translateX(-40px);
+}
