@@ -3,25 +3,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
-import { useParams, useSearchParams } from 'next/navigation'
+import { useParams, useSearchParams, useRouter } from 'next/navigation'
+import { 
+  Paper, Note, Project,
+  getProjectNotes, createProjectNote, deleteProjectNote,
+  listProjects // used in canvas for simple fetching or could use getProject
+} from '@/lib/api'
+import { createClient } from '@/lib/supabase/client'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
 // Monotonic counter — guarantees unique React keys even when events fire within same ms
 let _uid = 0
 const uid = () => `${Date.now()}_${++_uid}`
-
-// ── Types ──────────────────────────────────────────────────────────────────
-interface Paper {
-  arxiv_id: string
-  title: string
-  authors: string[]
-  abstract_snippet: string
-  published?: string
-  pdf_url?: string
-  categories?: string[]
-  credibility?: 'HIGH' | 'MEDIUM' | 'UNCERTAIN'
-}
 
 type MessageType = 'user' | 'assistant' | 'status' | 'chips' | 'paper_artifact' | 'error'
 
@@ -31,14 +25,6 @@ interface Message {
   content?: string
   chips?: string[]
   paper?: Paper
-}
-
-interface Note {
-  id: string
-  content: string
-  sourcePaperId?: string
-  sourcePaperTitle?: string
-  createdAt: string
 }
 
 // ── Simple markdown renderer ───────────────────────────────────────────────
@@ -290,11 +276,11 @@ function ToolsPanel({ paper, notes, onAddNote, onDeleteNote, onClose }: {
                 {notes.map(note => (
                   <div key={note.id} className="bg-slate-50 rounded-xl p-3.5 group border border-slate-100">
                     <p className="text-xs text-slate-700 leading-relaxed mb-1.5 font-medium">{note.content}</p>
-                    {note.sourcePaperTitle && (
-                      <p className="text-[10px] text-[color:var(--color-primary)] font-semibold truncate mb-2">📄 {note.sourcePaperTitle}</p>
+                    {note.source_paper_title && (
+                      <p className="text-[10px] text-[color:var(--color-primary)] font-semibold truncate mb-2">📄 {note.source_paper_title}</p>
                     )}
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-slate-400">{new Date(note.createdAt).toLocaleString()}</span>
+                      <span className="text-[10px] text-slate-400">{new Date(note.created_at).toLocaleString()}</span>
                       <button onClick={() => onDeleteNote(note.id)} className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-red-400">
                         <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>delete</span>
                       </button>
@@ -330,9 +316,15 @@ export default function CanvasPage() {
   // ── Persist a single message to Supabase ─────────────────────────────────
   const persistMessage = async (type: string, content?: string, metadata?: Record<string, unknown>) => {
     try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      
       await fetch(`${API_URL}/api/v1/projects/${encodeURIComponent(projectId)}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
         body: JSON.stringify({ msg_type: type, content, metadata }),
       })
     } catch (e) {
@@ -340,25 +332,37 @@ export default function CanvasPage() {
     }
   }
 
-  // ── Load notes from localStorage ─────────────────────────────────────────
-  useEffect(() => {
+  // ── Notes persistence via API ────────────────────────────────────────────
+  const loadNotes = useCallback(async () => {
     try {
-      const saved = localStorage.getItem(`notes_${projectId}`)
-      if (saved) setNotes(JSON.parse(saved))
-    } catch { /* ignore */ }
+      const data = await getProjectNotes(projectId)
+      setNotes(data)
+    } catch (err) {
+      console.error('Failed to load notes:', err)
+    }
   }, [projectId])
 
-  const saveNotes = (updated: Note[]) => {
-    setNotes(updated)
-    localStorage.setItem(`notes_${projectId}`, JSON.stringify(updated))
+  useEffect(() => {
+    loadNotes()
+  }, [loadNotes])
+
+  const addNote = async (content: string, paperId?: string, paperTitle?: string) => {
+    try {
+      const newNote = await createProjectNote(projectId, content, paperId, paperTitle)
+      setNotes(prev => [newNote, ...prev])
+    } catch (err) {
+      console.error('Failed to save note:', err)
+    }
   }
 
-  const addNote = (content: string, paperId?: string, paperTitle?: string) => {
-    const note: Note = { id: `note_${Date.now()}`, content, sourcePaperId: paperId, sourcePaperTitle: paperTitle, createdAt: new Date().toISOString() }
-    saveNotes([note, ...notes])
+  const deleteNote = async (id: string) => {
+    try {
+      await deleteProjectNote(projectId, id)
+      setNotes(prev => prev.filter(n => n.id !== id))
+    } catch (err) {
+      console.error('Failed to delete note:', err)
+    }
   }
-
-  const deleteNote = (id: string) => saveNotes(notes.filter(n => n.id !== id))
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
@@ -366,7 +370,14 @@ export default function CanvasPage() {
   useEffect(() => {
     const loadHistory = async () => {
       try {
-        const resp = await fetch(`${API_URL}/api/v1/projects/${encodeURIComponent(projectId)}/messages`)
+        const supabase = createClient()
+        const { data: { session } } = await supabase.auth.getSession()
+
+        const resp = await fetch(`${API_URL}/api/v1/projects/${encodeURIComponent(projectId)}/messages`, {
+          headers: {
+            'Authorization': `Bearer ${session?.access_token}`
+          }
+        })
         if (!resp.ok) throw new Error('failed')
         const rows: Array<{ id: number; msg_type: string; content?: string; metadata?: Record<string, unknown>; created_at: string }> = await resp.json()
 
@@ -474,8 +485,14 @@ export default function CanvasPage() {
     }
 
     try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+
       const resp = await fetch(`${API_URL}/api/v1/chat/research`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
         body: JSON.stringify({
           project_id: projectId,
           message: text,

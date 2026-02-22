@@ -5,38 +5,7 @@ import { motion } from 'framer-motion'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { AppShell } from '@/components/AppShell'
-import { getPaperRecommendations, type Paper } from '@/lib/api'
-
-// ── localStorage cache ─────────────────────────────────────────────────────
-const CACHE_KEY = 'saraswati_paper_cache'
-const CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour
-
-function getCachedPapers(interests: string[]): Paper[] | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY)
-    if (!raw) return null
-    const { papers, ts, key } = JSON.parse(raw)
-    if (key !== interests.join(',')) return null       // different interests — stale
-    if (Date.now() - ts > CACHE_TTL_MS) return null   // expired
-    return papers as Paper[]
-  } catch { return null }
-}
-
-function cachePapers(interests: string[], papers: Paper[]) {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({
-      papers,
-      ts: Date.now(),
-      key: interests.join(','),
-    }))
-  } catch { /* ignore quota errors */ }
-}
-
-// ── Static data ────────────────────────────────────────────────────────────
-const recentProjects = [
-  { id: '1', title: 'GraphRAG Survey',            papers: 12, updated: '2h ago',    status: 'active',  progress: 85, progressLabel: 'Analysis Progress',  color: 'bg-blue-500',   iconBg: 'bg-blue-50 text-blue-500',   icon: 'folder_open' },
-  { id: '2', title: 'LLM Fine-Tuning Benchmarks', papers: 8,  updated: 'Yesterday', status: 'writing', progress: 42, progressLabel: 'Drafting Progress', color: 'bg-indigo-500', iconBg: 'bg-indigo-50 text-indigo-500', icon: 'edit_note' },
-]
+import { getPaperRecommendations, listProjects, type Paper, type Project } from '@/lib/api'
 
 // ── Paper Card (horizontal scroll style) ──────────────────────────────────
 const _cc: Record<string, string> = {}
@@ -130,6 +99,7 @@ function PaperSkeleton() {
 // ── Page ───────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const [papers, setPapers]       = useState<Paper[]>([])
+  const [projects, setProjects]   = useState<Project[]>([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState<string | null>(null)
   const [interests, setInterests] = useState<string[]>([])
@@ -140,15 +110,20 @@ export default function DashboardPage() {
     return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
   }
 
-  const fetchAndCache = useCallback(async (userInterests: string[]) => {
+  const fetchData = useCallback(async (userInterests: string[]) => {
     setLoading(true)
     setError(null)
     try {
-      const result = await getPaperRecommendations(userInterests, 6)
-      cachePapers(userInterests, result)
-      setPapers(result)
-    } catch {
-      setError('Could not load recommendations. Is the backend running?')
+      // Fetch papers and projects in parallel
+      const [paperResults, projectResults] = await Promise.all([
+        getPaperRecommendations(userInterests, 6),
+        listProjects()
+      ])
+      setPapers(paperResults)
+      setProjects(projectResults)
+    } catch (err) {
+      console.error('Dashboard fetch error:', err)
+      setError('Could not load your dashboard. Is the backend running?')
     } finally {
       setLoading(false)
     }
@@ -159,21 +134,15 @@ export default function DashboardPage() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       const userInterests: string[] = user?.user_metadata?.interests ?? ['Machine Learning', 'NLP']
-      const name: string = user?.user_metadata?.display_name ?? ''
+      const name: string = user?.user_metadata?.display_name ?? user?.email?.split('@')[0] ?? ''
+      
       setInterests(userInterests)
       setDisplayName(name)
 
-      // Try cache first — avoids API call on revisit
-      const cached = getCachedPapers(userInterests)
-      if (cached && cached.length > 0) {
-        setPapers(cached)
-        setLoading(false)
-      } else {
-        await fetchAndCache(userInterests)
-      }
+      await fetchData(userInterests)
     }
     init()
-  }, [fetchAndCache])
+  }, [fetchData])
 
   return (
     <AppShell currentPath="/dashboard">
@@ -250,7 +219,7 @@ export default function DashboardPage() {
               </p>
             )}
             <button
-              onClick={() => fetchAndCache(interests)}
+              onClick={() => fetchData(interests)}
               className="w-8 h-8 flex items-center justify-center rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-400 transition-colors"
               title="Refresh"
             >
@@ -291,17 +260,23 @@ export default function DashboardPage() {
         </div>
 
         <div className="space-y-3">
-          {recentProjects.map((project, i) => (
+          {projects.length === 0 && !loading && (
+            <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+              <p className="text-sm text-slate-500">No projects yet. Start one to see it here!</p>
+            </div>
+          )}
+          {projects.slice(0, 3).map((project, i) => (
             <motion.div
               key={project.id}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.35, delay: 0.05 + i * 0.08 }}
               className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:border-[color:var(--color-primary)]/40 hover:shadow-md transition-all flex items-center gap-5 cursor-pointer group"
+              onClick={() => window.location.href = `/dashboard/explore/${project.id}?title=${encodeURIComponent(project.title)}`}
             >
               {/* Icon */}
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${project.iconBg}`}>
-                <span className="material-symbols-outlined text-xl">{project.icon}</span>
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${i % 2 === 0 ? 'bg-blue-50 text-blue-500' : 'bg-indigo-50 text-indigo-500'}`}>
+                <span className="material-symbols-outlined text-xl">{i % 2 === 0 ? 'folder_open' : 'edit_note'}</span>
               </div>
 
               {/* Info */}
@@ -320,23 +295,23 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-3 text-xs text-slate-400">
                   <span className="flex items-center gap-1">
                     <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>description</span>
-                    {project.papers} papers
+                    {project.paper_count} papers
                   </span>
                   <span className="flex items-center gap-1">
                     <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>schedule</span>
-                    {project.updated}
+                    {new Date(project.created_at).toLocaleDateString()}
                   </span>
                 </div>
               </div>
 
-              {/* Progress bar */}
+              {/* Progress bar (simplified since we don't have real progress yet) */}
               <div className="hidden md:block w-44 shrink-0 mr-2">
                 <div className="flex justify-between text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-tight">
-                  <span>{project.progressLabel}</span>
-                  <span>{project.progress}%</span>
+                  <span>Progress</span>
+                  <span>{project.status === 'complete' ? '100%' : '25%'}</span>
                 </div>
                 <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                  <div className={`${project.color} h-full rounded-full`} style={{ width: `${project.progress}%` }} />
+                  <div className={`${project.status === 'complete' ? 'bg-indigo-500' : 'bg-blue-500'} h-full rounded-full`} style={{ width: project.status === 'complete' ? '100%' : '25%' }} />
                 </div>
               </div>
 

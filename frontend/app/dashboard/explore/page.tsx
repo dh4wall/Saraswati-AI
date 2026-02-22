@@ -5,59 +5,57 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import { AppShell } from '@/components/AppShell'
 
-// ── Types ──────────────────────────────────────────────────────────────────
-interface Project {
-  id: string
-  title: string
-  description: string
-  createdAt: string
-  paperCount: number
-  status: 'active' | 'draft' | 'complete'
-}
+import { Project, listProjects, createProject } from '@/lib/api'
 
-const STATUS_CONFIG = {
+const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   active:   { label: 'Active',    cls: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
   draft:    { label: 'Draft',     cls: 'bg-slate-100 text-slate-500 border-slate-200' },
   complete: { label: 'Complete',  cls: 'bg-indigo-50 text-indigo-600 border-indigo-200' },
 }
 
-// Use localStorage — read only after mount to avoid SSR/client hydration mismatch
+// Use Supabase-driven projects
 function useProjects() {
   const [projects, setProjects] = useState<Project[]>([])
   const [mounted, setMounted] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('saraswati_projects')
-      if (saved) setProjects(JSON.parse(saved))
-    } catch { /* ignore */ }
-    setMounted(true)
+    const load = async () => {
+      try {
+        const data = await listProjects()
+        setProjects(data)
+      } catch (err) {
+        console.error('Failed to load projects:', err)
+      } finally {
+        setMounted(true)
+        setLoading(false)
+      }
+    }
+    load()
   }, [])
 
-  const addProject = (p: Project) => {
-    const updated = [p, ...projects]
-    setProjects(updated)
-    localStorage.setItem('saraswati_projects', JSON.stringify(updated))
+  const addProject = async (title: string, description?: string) => {
+    try {
+      const newProj = await createProject(title, description)
+      setProjects([newProj, ...projects])
+      return newProj
+    } catch (err) {
+      console.error('Failed to create project:', err)
+      throw err
+    }
   }
 
-  return { projects, addProject, mounted }
+  return { projects, addProject, mounted, loading }
 }
 
 // ── New Project Modal ──────────────────────────────────────────────────────
-function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p: Project) => void }) {
+function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate: (title: string, desc?: string) => void }) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
 
   const handleCreate = () => {
     if (!title.trim()) return
-    onCreate({
-      id: `proj_${Date.now()}`,
-      title: title.trim(),
-      description: description.trim(),
-      createdAt: new Date().toISOString(),
-      paperCount: 0,
-      status: 'active',
-    })
+    onCreate(title.trim(), description.trim())
     onClose()
   }
 
@@ -136,8 +134,8 @@ export default function ExplorePage() {
   const { projects, addProject, mounted } = useProjects()
   const [showCreate, setShowCreate] = useState(false)
 
-  const handleCreate = (p: Project) => {
-    addProject(p)
+  const handleCreate = async (title: string, desc?: string) => {
+    const p = await addProject(title, desc)
     router.push(`/dashboard/explore/${p.id}?title=${encodeURIComponent(p.title)}`)
   }
 
@@ -232,9 +230,9 @@ export default function ExplorePage() {
                 <div className="flex items-center justify-between text-xs text-slate-400 font-medium mt-3">
                   <span className="flex items-center gap-1">
                     <span className="material-symbols-outlined" style={{ fontSize: '12px' }}>article</span>
-                    {project.paperCount} papers
+                    {project.paper_count} papers
                   </span>
-                  <span>{new Date(project.createdAt).toLocaleDateString()}</span>
+                  <span>{new Date(project.created_at).toLocaleDateString()}</span>
                 </div>
               </motion.div>
             )

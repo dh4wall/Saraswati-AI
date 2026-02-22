@@ -56,23 +56,59 @@ async def get_recommendations(
 ) -> list[dict[str, Any]]:
     """
     Fetches paper recommendations from ArXiv based on user interests.
-    Ingestion (chunking + embedding + Neo4j) runs in the background so the
-    response is fast.
+    Uses a DB cache (recommendation_cache) to avoid redundant ArXiv hits.
     """
     topics = [t.strip() for t in interests.split(",") if t.strip()]
     if not topics:
         return []
+    
+    # Normalize topics for cache key
+    cache_key = ",".join(sorted(topics)).lower()
+    
+    # 1. Try Cache First
+    from app.core.supabase import get_supabase
+    sb = get_supabase()
+    from datetime import datetime, timedelta
+    
+    try:
+        # We look for a cache entry less than 24 hours old
+        threshold = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        cache_resp = (
+            sb.table("recommendation_cache")
+            .select("papers, created_at")
+            .eq("interests", cache_key)
+            .gt("created_at", threshold)
+            .execute()
+        )
+        if cache_resp.data:
+            logger.info("Serving paper recommendations from cache for: %s", cache_key)
+            cached_papers = cache_resp.data[0]["papers"]
+            return cached_papers[:limit]
+    except Exception as exc:
+        logger.warning("Cache check failed: %s", exc)
 
-    # Fetch from ArXiv — 3 papers per topic, then deduplicate
+    # 2. Cache Miss: Fetch from ArXiv
     all_papers: list[dict[str, Any]] = []
-    for topic in topics[:3]:      # cap topics to avoid too many API calls
-        fetched = await arxiv_service.search_papers(topic, max_results=3)
+    for topic in topics[:3]:
+        fetched = await arxiv_service.search_papers(topic, max_results=5) # Fetch a few more to populate cache well
         all_papers.extend(fetched)
 
-    unique_papers = _deduplicate(all_papers)[:limit]
+    unique_papers = _deduplicate(all_papers)
+    formatted_papers = [_format_for_response(p) for p in unique_papers]
 
-    # Background: ingest any new papers (chunk → embed → Neo4j)
-    for paper in unique_papers:
+    # 3. Update Cache (Upsert)
+    try:
+        sb.table("recommendation_cache").upsert({
+            "interests": cache_key,
+            "papers": formatted_papers,
+            "created_at": datetime.utcnow().isoformat()
+        }).execute()
+        logger.info("Updated paper cache for: %s", cache_key)
+    except Exception as exc:
+        logger.error("Failed to update cache: %s", exc)
+
+    # 4. Background Ingestion
+    for paper in unique_papers[:limit]:
         background_tasks.add_task(ingestion_service.ingest_paper, paper)
 
-    return [_format_for_response(p) for p in unique_papers]
+    return formatted_papers[:limit]
